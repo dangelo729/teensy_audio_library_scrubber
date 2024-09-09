@@ -5,4 +5,4 @@ at the example to see it in action.
 
 This object enables smooth scrubbing and variable speed playback of raw audio files stored on an SD card.
 
-Feel free to throw into your projects, if you use it please tell me!
+Feel free to throw this into your projects, if you use it please tell me!
