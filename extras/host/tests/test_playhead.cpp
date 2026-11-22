@@ -283,17 +283,18 @@ SB_TEST(playhead_stops_at_the_first_sample_its_window_does_not_hold) {
     p.setWindow(s.data(), 0, 1000);
     p.setSpeed(1.0);
     std::vector<float> out(2000);
-    CHECK(p.render(out.data(), 2000, true) == 999);
-    for (int i = 0; i < 999; ++i) CHECK(out[i] == as(s[i + 1]));
-    CHECK(p.playhead() == 999.0 && p.locked());
+    // a read takes the two samples past the one it is at, so it stops two short of the window's end
+    CHECK(p.render(out.data(), 2000, true) == 997);
+    for (int i = 0; i < 997; ++i) CHECK(out[i] == as(s[i + 1]));
+    CHECK(p.playhead() == 997.0 && p.locked());
     // asked again with the same window, it has made nothing more
     CHECK(p.render(out.data(), 2000, true) == 0);
-    CHECK(p.playhead() == 999.0);
+    CHECK(p.playhead() == 997.0);
     // the window moved to where it goes next, it goes on with that sample
-    CHECK(p.windowFor(1000) == 500);
-    p.setWindow(s.data() + 500, 500, 1000);
+    CHECK(p.windowFor(1000) == 997);
+    p.setWindow(s.data() + 997, 997, 1000);
     CHECK(p.render(out.data(), 400, true) == 400);
-    for (int i = 0; i < 400; ++i) CHECK(out[i] == as(s[1000 + i]));
+    for (int i = 0; i < 400; ++i) CHECK(out[i] == as(s[998 + i]));
 }
 
 SB_TEST(playhead_says_where_a_window_should_start) {
@@ -307,6 +308,12 @@ SB_TEST(playhead_says_where_a_window_should_start) {
     CHECK(p.windowFor(1000) == 99000);
     CHECK(p.windowFor(100000) == 0);
     CHECK(p.windowFor(200000) == 0);
+    // going on, it starts with what the next read takes; going back, it ends with it
+    p.cut(50000.0);
+    p.setSpeed(1.0);
+    CHECK(p.windowFor(1000) == 50000);
+    p.setSpeed(-1.0);
+    CHECK(p.windowFor(1000) == 49002);
 }
 
 SB_TEST(playhead_is_silent_where_its_window_holds_nothing_and_goes_on) {
@@ -322,7 +329,7 @@ SB_TEST(playhead_is_silent_where_its_window_holds_nothing_and_goes_on) {
     CHECK(p.playhead() == 5064.0);
 }
 
-SB_TEST(playhead_at_its_windows_edge_reads_the_nearest_sample_it_holds) {
+SB_TEST(playhead_makes_no_read_its_window_does_not_hold_all_of) {
     // the window is the sound's samples 100 .. 199 and nothing else, on the heap, so a read past it is caught
     const std::vector<int16_t> window = [] {
         std::vector<int16_t> w(100);
@@ -331,26 +338,166 @@ SB_TEST(playhead_at_its_windows_edge_reads_the_nearest_sample_it_holds) {
     }();
     sb::Playhead p;
     float out[1];
-    // half way past its last sample
     p.setSound(1000);
     p.setWindow(window.data(), 100, 100);
-    p.cut(199.0);
+    // between its samples 197 and 198 a read takes 196 .. 199: all there
+    p.cut(197.0);
     p.setSpeed(0.5);
     CHECK(p.render(out, 1, true) == 1);
-    CHECK_MSG(out[0] * 32768.0f >= 199.0f && out[0] * 32768.0f <= 199.5f, "%f", out[0] * 32768.0f);
-    // half way from its first sample to its second, going back
+    CHECK_MSG(std::fabs(out[0] * 32768.0f - 197.5f) < 1e-3f, "%f", out[0] * 32768.0f);
+    // a sample on, it takes 200, which is not
+    p.cut(198.0);
+    CHECK(p.render(out, 1, true) == 0);
+    // and at its other end, 99
     p.cut(101.0);
     p.setSpeed(-0.5);
-    CHECK(p.render(out, 1, true) == 1);
-    CHECK_MSG(out[0] * 32768.0f >= 100.0f && out[0] * 32768.0f <= 101.0f, "%f", out[0] * 32768.0f);
-    // looping, at the sound's seam, with only its end in the window
+    CHECK(p.render(out, 1, true) == 0);
+}
+
+SB_TEST(playhead_round_a_loops_seam_reads_the_nearest_sample_its_window_holds) {
+    std::vector<int16_t> end(100), start(100);
+    for (int k = 0; k < 100; ++k) {
+        end[k] = (int16_t)(100 + k);
+        start[k] = (int16_t)k;
+    }
+    sb::Playhead p;
+    float out[1];
+    // the window the end of a sound of two hundred: half way from its last sample round to its first
     p.setSound(200);
-    p.setWindow(window.data(), 100, 100);
+    p.setWindow(end.data(), 100, 100);
     p.setLoop(true);
     p.cut(199.0);
     p.setSpeed(0.5);
     CHECK(p.render(out, 1, true) == 1);
     CHECK_MSG(out[0] * 32768.0f >= 199.0f && out[0] * 32768.0f <= 199.5f, "%f", out[0] * 32768.0f);
+    // the window its start: half way from its second sample back to its first
+    p.setSound(200);
+    p.setWindow(start.data(), 0, 100);
+    p.cut(1.0);
+    p.setSpeed(-0.5);
+    CHECK(p.render(out, 1, true) == 1);
+    CHECK_MSG(out[0] * 32768.0f >= 0.0f && out[0] * 32768.0f <= 1.0f, "%f", out[0] * 32768.0f);
+}
+
+SB_TEST(playhead_reads_a_curve_between_its_samples) {
+    // a cubic through a parabola is the parabola; a straight line is a quarter out half way
+    std::vector<int16_t> s(181);
+    for (int i = 0; i < 181; ++i) s[i] = (int16_t)(i * i);
+    sb::Playhead p;
+    p.setBuffer(s.data(), 181);
+    p.cut(50.0);
+    p.setSpeed(0.5);
+    float out[100];
+    p.render(out, 100);
+    for (int k = 0; k < 100; ++k) {
+        const float at = 50.0f + 0.5f * (k + 1);
+        CHECK_MSG(std::fabs(out[k] * 32768.0f - at * at) < 0.02f, "at %g it is %f", at, out[k] * 32768.0f);
+    }
+}
+
+SB_TEST(playhead_through_a_window_is_the_same_as_the_whole_sound) {
+    const uint32_t count = 200000;
+    const auto s = sound(count, wave);
+    sb::Playhead whole;
+    whole.setBuffer(s.data(), count);
+    Deck deck(count, 1000, wave);
+    std::vector<float> a(2000), b(2000);
+    // each a setting of both, and how long it is kept
+    struct Move { double rate, speed, target; int blocks; };
+    const Move moves[] = {
+        { 0.002, 0.0, 100000.0, 5 },    // scrubbed to its middle
+        { 1.0, 0.5, -1.0, 4 },          // played slow, back, fast and between
+        { 1.0, -0.7, -1.0, 4 },
+        { 1.0, 1.37, -1.0, 4 },
+        { 1.0, -4.9, -1.0, 4 },
+        { 0.002, 0.0, 180000.0, 5 },    // scrubbed on and back
+        { 0.0005, 0.0, 20000.0, 8 },
+    };
+    long differ = 0;
+    for (const Move& m : moves) {
+        for (sb::Playhead* p : { &whole, &deck.head }) {
+            p->setRate(m.rate);
+            p->setSpeed(m.speed);
+            if (m.target >= 0.0) p->setTarget(m.target);
+            else p->cut(p->playhead());
+        }
+        for (int k = 0; k < m.blocks; ++k) {
+            whole.render(a.data(), 2000);
+            deck.render(b.data(), 2000);
+            for (int i = 0; i < 2000; ++i) differ += a[i] != b[i];
+            CHECK(whole.playhead() == deck.head.playhead());
+        }
+    }
+    CHECK_MSG(differ == 0, "%ld samples differ", differ);
+    CHECK(deck.loads > 100);
+}
+
+SB_TEST(playhead_chasing_round_a_loop_never_goes_back_over_the_sound) {
+    const auto s = sound(1000, wave);
+    for (const double speed : { 3.0, -3.0 }) {
+        sb::Playhead p;
+        p.setBuffer(s.data(), 1000);
+        p.setLoop(true);
+        p.setRate(0.5);
+        p.setSpeed(speed);
+        // the same with nothing to go round: a target that runs on, a playhead after it
+        double target = 0.0, playhead = 0.0;
+        float out[1];
+        bool same = true;
+        for (int k = 0; k < 3000; ++k) {
+            p.render(out, 1);
+            target += speed;
+            playhead += (target - playhead) * 0.5;
+            const double want = playhead - std::floor(playhead / 1000.0) * 1000.0, off = std::fabs(p.playhead() - want);
+            same = same && (off < 1e-6 || off > 1000.0 - 1e-6);
+        }
+        CHECK(same);
+        CHECK(!p.locked());
+    }
+}
+
+SB_TEST(playhead_that_stops_looping_stays_where_it_is_heard) {
+    const auto s = sound(1000, wave);
+    sb::Playhead p;
+    p.setBuffer(s.data(), 1000);
+    p.setLoop(true);
+    p.setRate(0.01);
+    p.setSpeed(0.999);
+    // until its target is just round the seam and the playhead still short of it
+    float out[1];
+    int waited = 0;
+    while (!(p.target() < 50.0 && p.playhead() > 800.0) && waited++ < 20000) p.render(out, 1);
+    CHECK(p.target() < 50.0 && p.playhead() > 800.0);
+    const double heard = p.playhead();
+    p.setLoop(false);
+    CHECK_MSG(p.playhead() == heard, "heard at %.3f, then at %.3f", heard, p.playhead());
+}
+
+SB_TEST(playhead_given_a_target_or_a_sound_lets_go_of_what_it_had) {
+    const auto s = sound(1000, wave);
+    sb::Playhead p;
+    p.setBuffer(s.data(), 1000);
+    p.setSpeed(1.0);
+    float out[16];
+    p.render(out, 16);
+    CHECK(p.locked());
+    p.setTarget(500.0);
+    CHECK(!p.locked());
+    p.render(out, 16);
+    CHECK(p.locked());
+    p.setLoop(true);
+    CHECK(!p.locked());
+    // a new sound: nothing of the old is in its window
+    p.setSound(1000);
+    CHECK(p.playhead() == 0.0 && p.target() == 0.0);
+    CHECK(p.render(out, 16, true) == 0);
+    // a rate past 1 is 1
+    p.setBuffer(s.data(), 1000);
+    p.setSpeed(0.0);
+    p.setRate(7.0);
+    p.setTarget(300.0);
+    p.render(out, 1);
+    CHECK(p.playhead() == 300.0);
 }
 
 SB_TEST(playhead_holds_wild_values) {

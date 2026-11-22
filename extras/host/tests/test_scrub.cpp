@@ -319,7 +319,9 @@ SB_TEST(scrub_holds_what_is_asked_to_its_range) {
 }
 
 SB_TEST(scrub_stops_at_a_read_that_brings_nothing) {
-    for (const int fail : { 1, 2 }) {
+    // a read that brings nothing, one that answers with an error, and a seek that fails before any read
+    for (const int fail : { 1, 2, 3 }) {
+        const long asked = fail == 3 ? 0 : 1;
         Rig r;
         host::audio.pool = 2;
         r.file("A.RAW", 1000000, wave);
@@ -333,9 +335,9 @@ SB_TEST(scrub_stops_at_a_read_that_brings_nothing) {
         int blocks = 0;
         while (r.block() && blocks < 1000) ++blocks;
         CHECK(blocks > 0 && blocks < 1000);
-        CHECK(host::card.reads == reads + 1);
+        CHECK(host::card.reads == reads + asked);
         for (int k = 0; k < 100; ++k) CHECK(!r.block());
-        CHECK(host::card.reads == reads + 1);
+        CHECK(host::card.reads == reads + asked);
         CHECK(host::audio.out == 0);
         // the card back, it is started again and sounds
         host::card.fail = 0;
@@ -440,4 +442,229 @@ SB_TEST(scrub_tells_the_audio_library_of_the_card_once) {
         r.s.stop();
     }
     CHECK(host::guards == 1);
+}
+
+namespace {
+
+// the scrubber the card calls back to while it opens a file, as the audio
+// interrupt might come in the middle of setFile
+AudioPlayScrub* opening = nullptr;
+void interrupt() {
+    opening->activate(true, AudioPlayScrub::PLAY);
+    opening->update();
+}
+
+// a sample as update() holds it to 16 bits
+int16_t sixteen(float x) {
+    const float v = x * 32768.0f;
+    return v >= 32767.0f ? 32767 : v <= -32768.0f ? -32768 : (int16_t)lrintf(v);
+}
+
+// full scale one way for two samples and the other for two: between the
+// two alike a cubic swings past full scale
+int16_t square(uint64_t i) {
+    return i % 4 == 1 || i % 4 == 2 ? 32767 : -32768;
+}
+
+}  // namespace
+
+SB_TEST(scrub_given_a_file_leaves_the_card_to_the_audio_interrupt) {
+    Rig r;
+    r.file("A.RAW", 100000, wave);
+    r.file("B.RAW", 100000, ramp);
+    // setFile opens the file and reads nothing of it
+    r.s.setFile("A.RAW");
+    CHECK(host::card.reads == 0);
+    r.s.activate(true, AudioPlayScrub::PLAY);
+    for (int k = 0; k < 3; ++k) CHECK(r.block());
+    // the audio interrupt in the middle of setFile, told to sound: nothing is sent and nothing read
+    opening = &r.s;
+    host::card.opening = interrupt;
+    const long sent = host::audio.sent, reads = host::card.reads;
+    CHECK(r.s.setFile("B.RAW"));
+    host::card.opening = nullptr;
+    CHECK(host::audio.sent == sent && host::card.reads == reads && host::audio.out == 0);
+    // and then it is the new file, from its start
+    CHECK(r.block());
+    for (int i = 0; i < kBlock; ++i) CHECK(r.out()[i] == ramp(1 + i));
+}
+
+SB_TEST(scrub_read_on_through_a_file_never_sends_the_card_back) {
+    Rig r;
+    r.file("A.RAW", 4000000, wave);
+    r.s.setFile("A.RAW");
+    r.s.setSpeed(1.0f);
+    r.s.activate(true, AudioPlayScrub::PLAY);
+    const int blocks = 2000;
+    uint64_t at = 1;
+    bool same = true;
+    for (int k = 0; k < blocks; ++k) {
+        CHECK(r.block());
+        for (int i = 0; i < kBlock; ++i, ++at) same = same && r.out()[i] == wave(at);
+    }
+    CHECK(same);
+    CHECK_MSG(host::card.back == 0, "%ld seeks went back", host::card.back);
+    // each sample is read once: no more than the samples played and the window ahead of them
+    const long most = 2L * (blocks * kBlock + (long)AudioPlayScrub::kWindow);
+    CHECK_MSG(host::card.bytes <= most, "%ld bytes read for %d samples", host::card.bytes, blocks * kBlock);
+    // faster and slower too
+    for (const float speed : { 5.0f, 0.3f }) {
+        r.s.setSpeed(speed);
+        for (int k = 0; k < blocks; ++k) CHECK(r.block());
+    }
+    CHECK(host::card.back == 0);
+}
+
+SB_TEST(scrub_holds_its_sound_to_sixteen_bits) {
+    Rig r;
+    r.file("A.RAW", 100000, square);
+    r.s.setFile("A.RAW");
+    r.s.setSpeed(0.5f);
+    r.s.activate(true, AudioPlayScrub::PLAY);
+    CHECK(r.block());
+    // half way between samples 1 and 2, both full scale up, and 3 and 4, both down
+    CHECK(r.out()[2] == 32767);
+    CHECK(r.out()[6] == -32768);
+}
+
+SB_TEST(scrub_changes_mode_in_the_middle_of_a_scrub_from_where_it_is_heard) {
+    Rig r;
+    r.file("A.RAW", 100000, ramp);
+    r.s.setFile("A.RAW");
+    r.s.setRate(0.0005f);
+    r.s.setTarget(0.9f);
+    r.s.activate(true, AudioPlayScrub::SCRUB);
+    for (int k = 0; k < 3; ++k) CHECK(r.block());
+    const int heard = r.out()[kBlock - 1];
+    CHECK(heard > -10000 + 10000 && heard < -10000 + 20000);   // some way along the ramp, far from its target
+    r.s.setSpeed(1.0f);
+    r.s.setMode(AudioPlayScrub::PLAY);
+    CHECK(r.block());
+    CHECK_MSG(std::abs(r.out()[0] - (heard + 1)) <= 1, "heard %d, then %d", heard, r.out()[0]);
+    for (int i = 1; i < kBlock; ++i) CHECK(r.out()[i] == r.out()[i - 1] + 1);
+}
+
+SB_TEST(scrub_lent_another_window_reads_it_in) {
+    Rig r;
+    r.file("A.RAW", 100000, wave);
+    r.s.setFile("A.RAW");
+    r.s.activate(true, AudioPlayScrub::PLAY);
+    uint64_t at = 1;
+    bool same = true;
+    for (int k = 0; k < 5; ++k) {
+        CHECK(r.block());
+        for (int i = 0; i < kBlock; ++i, ++at) same = same && r.out()[i] == wave(at);
+    }
+    // the old one is the sketch's again, and written over
+    std::vector<int16_t> other(2000, 0x5555);
+    r.s.setScrubBuffer(other.data(), 2000);
+    for (int16_t& x : r.window) x = 0x5555;
+    for (int k = 0; k < 50; ++k) {
+        CHECK(r.block());
+        for (int i = 0; i < kBlock; ++i, ++at) same = same && r.out()[i] == wave(at);
+    }
+    CHECK(same);
+    // a window too short for one read is none
+    r.s.setScrubBuffer(other.data(), 3);
+    CHECK(!r.block());
+    r.s.setScrubBuffer(nullptr);
+    CHECK(!r.block());
+}
+
+SB_TEST(scrub_plays_nothing_a_short_read_did_not_bring) {
+    Rig r;
+    r.file("A.RAW", 1000000, wave);
+    for (int16_t& x : r.window) x = 0x5555;    // what is in the window before the card is read
+    r.s.setFile("A.RAW");
+    r.s.setSpeed(5.0f);
+    r.s.activate(true, AudioPlayScrub::PLAY);
+    host::card.fail = 4;
+    uint64_t at = 5;
+    long own = 0, other = 0;
+    for (int k = 0; k < 400; ++k) {
+        CHECK(r.block());
+        for (int i = 0; i < kBlock; ++i, at += 5) {
+            if (r.out()[i] == wave(at)) ++own;
+            else if (r.out()[i] != 0) ++other;
+        }
+    }
+    CHECK_MSG(other == 0, "%ld samples were neither the file's nor silent", other);
+    CHECK(own > 0);
+    CHECK(host::audio.out == 0);
+}
+
+SB_TEST(scrub_keeps_its_place_in_a_file_past_four_gigabytes) {
+    Rig r;
+    const uint64_t count = 3000000001ull;       // six gigabytes
+    r.file("A.RAW", count, wave);
+    r.s.setFile("A.RAW");
+    r.s.setRate(0.01f);
+    r.s.setTarget(0.9f);                        // past four gigabytes in
+    r.s.activate(true, AudioPlayScrub::SCRUB);
+    for (int k = 0; k < 60; ++k) CHECK(r.block());
+    // played on from there: the sample after the one nearest where it was sent
+    const uint64_t first = (uint64_t)std::floor((double)0.9f * (double)(count - 1) + 1.5);
+    r.s.setSpeed(1.0f);
+    r.s.setMode(AudioPlayScrub::PLAY);
+    CHECK(r.block());
+    for (int i = 0; i < kBlock; ++i) CHECK(r.out()[i] == wave(first + i));
+}
+
+SB_TEST(scrub_is_the_playhead_over_the_whole_file_or_silent) {
+    Rig r;
+    const uint32_t count = 400000;
+    r.file("A.RAW", count, wave);
+    std::vector<int16_t> all(count);
+    for (uint32_t i = 0; i < count; ++i) all[i] = wave(i);
+    sb::Playhead whole;
+    whole.setBuffer(all.data(), count);
+    r.s.setFile("A.RAW");
+    r.s.activate(true, AudioPlayScrub::SCRUB);
+    // each a setting, how long it is kept, and whether the card keeps up with it
+    struct Move { int mode; float rate, speed, target; int blocks; bool keeps; };
+    const Move moves[] = {
+        { AudioPlayScrub::SCRUB, 0.01f, 0.0f, 0.5f, 100, false },     // to its middle, too fast to hear all of
+        { AudioPlayScrub::PLAY, 0.0f, 0.5f, 0.0f, 100, true },
+        { AudioPlayScrub::PLAY, 0.0f, -0.7f, 0.0f, 100, true },
+        { AudioPlayScrub::PLAY, 0.0f, 3.3f, 0.0f, 50, true },
+        { AudioPlayScrub::SCRUB, 0.0002f, 0.0f, 0.9f, 300, true },
+        { AudioPlayScrub::SCRUB, 0.5f, 0.0f, 0.0f, 5, false },         // and across it in a few samples
+        { AudioPlayScrub::SCRUB, 0.5f, 0.0f, 1.0f, 5, false },
+        { AudioPlayScrub::PLAY, 0.0f, -1.0f, 0.0f, 50, true },
+    };
+    int was = AudioPlayScrub::STOPPED;
+    float out[kBlock];
+    for (const Move& m : moves) {
+        long wrong = 0, silent = 0;
+        r.s.setRate(m.rate);
+        r.s.setSpeed(m.speed);
+        r.s.setTarget(m.target);
+        r.s.setMode(m.mode);
+        for (int k = 0; k < m.blocks; ++k) {
+            // the whole sound set as update() sets its playhead
+            if (m.mode == AudioPlayScrub::PLAY) {
+                if (was != AudioPlayScrub::PLAY) whole.cut(whole.playhead());
+                whole.setLoop(true);
+                whole.setRate(1.0);
+                whole.setSpeed(m.speed);
+            } else {
+                whole.setLoop(false);
+                whole.setSpeed(0.0);
+                whole.setRate(m.rate);
+                whole.setTarget((double)m.target * (double)(count - 1));
+            }
+            was = m.mode;
+            whole.render(out, kBlock);
+            CHECK(r.block());
+            for (int i = 0; i < kBlock; ++i) {
+                const int16_t want = sixteen(out[i]);
+                if (r.out()[i] == want) continue;
+                if (r.out()[i] == 0) ++silent;
+                else ++wrong;
+            }
+        }
+        CHECK_MSG(wrong == 0, "%ld samples were neither the sound's nor silent", wrong);
+        if (m.keeps) CHECK_MSG(silent == 0, "%ld samples were silent", silent);
+    }
+    CHECK(host::audio.out == 0);
 }

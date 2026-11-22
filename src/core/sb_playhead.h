@@ -25,10 +25,12 @@
 //
 // the sound need not all be in memory. the window is the part that is: a
 // run of its samples from some sample on. the playhead is heard while the
-// window holds the sample it stands on and is silent while it does not,
-// and render can stop at the first sample the window does not hold, so
-// whoever keeps the window can move it to where windowFor says, about the
-// sample the playhead goes to next, and go on.
+// window holds what a read where it stands takes, the sample before it to
+// the two after, and is silent while it does not. render can stop at the
+// first sample the window does not hold, so whoever keeps the window can
+// move it to where windowFor says and go on: starting with what the next
+// read takes if the playhead is going on, ending with it if it is going
+// back, so all of the window lies the way the playhead is going.
 //
 // the playhead and the target are doubles: a float cannot tell one sample
 // from the next past a few minutes of sound.
@@ -72,15 +74,18 @@ public:
         setWindow(samples, 0, count);
     }
 
-    // where a window length samples long starts to hold the sample the
-    // playhead goes to next in its middle, no further than the sound's ends
+    // where a window length samples long starts to hold what the next
+    // sample's read takes: at its start if the playhead is going on, at
+    // its end if it is going back, in its middle if it is at rest. no
+    // further than the sound's ends
     uint32_t windowFor(uint32_t length) const {
         if (length >= count_) return 0;
         Playhead next = *this;
         next.advance();
-        const uint32_t half = length / 2;
-        const double at = floor(next.place(next.playhead_)) - (double)half, most = (double)(count_ - length);
-        return (uint32_t)(at > 0.0 ? (at < most ? at : most) : 0.0);
+        const int64_t n = (int64_t)count_, room = n - (int64_t)length, at = next.index((int64_t)floor(next.playhead_));
+        const int64_t first = at > 0 ? at - 1 : 0, last = at + 2 < n ? at + 2 : n - 1;
+        const int64_t start = next.step_ > 0.0 ? first : next.step_ < 0.0 ? last + 1 - (int64_t)length : at - (int64_t)(length / 2);
+        return (uint32_t)(start < 0 ? 0 : start > room ? room : start);
     }
 
     // of the way to its target the playhead goes each sample, over 0 and
@@ -99,10 +104,11 @@ public:
         locked_ = false;
     }
 
-    // whether the sound loops. one that stops looping holds its target
-    // and its playhead to its ends
+    // whether the sound loops. one that stops looping keeps its playhead
+    // where it is heard, and its target, held to its ends
     void setLoop(bool on) {
         if (on == loop_) return;
+        if (!on) playhead_ = place(playhead_);
         loop_ = on;
         locked_ = false;
         if (!on) {
@@ -214,22 +220,27 @@ private:
     // before its start and its last past its end
     int64_t index(int64_t i) const {
         const int64_t n = (int64_t)count_;
-        if (loop_) {
-            const int64_t k = i % n;
-            return k < 0 ? k + n : k;
-        }
-        return i < 0 ? 0 : i >= n ? n - 1 : i;
+        if (!loop_) return i < 0 ? 0 : i >= n ? n - 1 : i;
+        // a turn either way is the most there nearly ever is to take off
+        if (i >= n) i -= n;
+        else if (i < 0) i += n;
+        if (i >= 0 && i < n) return i;
+        const int64_t k = i % n;
+        return k < 0 ? k + n : k;
     }
 
-    // whether the window holds sample i
+    // whether the window holds what a read at sample i takes: the samples
+    // from the one before it to the two after, as far as the sound's ends
     bool holds(int64_t i) const {
         if (!have_) return false;
-        const int64_t j = index(i) - (int64_t)start_;
-        return j >= 0 && j < (int64_t)have_;
+        const int64_t n = (int64_t)count_, at = index(i);
+        const int64_t first = (at > 0 ? at - 1 : 0) - (int64_t)start_, last = (at + 2 < n ? at + 2 : n - 1) - (int64_t)start_;
+        return first >= 0 && last < (int64_t)have_;
     }
 
-    // the sample o on from sample i, which the window holds: the sound's
-    // own if the window holds that too, else the nearest to it that it does
+    // the sample o on from sample i, whose read the window holds: the
+    // sound's own, or, round a loop's seam where the window does not reach,
+    // the nearest to it that the window holds
     float sample(int64_t i, int o) const {
         int64_t j = index(i + o) - (int64_t)start_;
         if (j < 0 || j >= (int64_t)have_) {

@@ -27,12 +27,16 @@
 // update() sees the old file, or nothing, or the new one. call the setters
 // from the main loop.
 //
-// the card. update() reads it, as the audio library's own sd players do,
-// and at most once a block: one window, when the playhead has left the one
-// in memory. a playhead crossing the file faster than that keeps up with
-// is heard in bursts. a read that brings nothing stops the scrubber, as
-// stop() does. the sketch keeps off the card while the scrubber sounds:
-// stop() it before writing a file. no Serial and no heap in here.
+// the card. only update() reads it, as the audio library's own sd players
+// do, and at most once a block: one window, when the playhead has left
+// the one in memory, laid the way the playhead is going. going on through
+// the file, what the old window still has of the new one is kept and the
+// card is read on from where it stands, so a file played forwards is read
+// end to end, once. a playhead crossing the file faster than a read a
+// block keeps up with is heard in bursts. a read that brings nothing
+// stops the scrubber, as stop() does. the sketch keeps off the card while
+// the scrubber sounds: stop() it before writing a file. no Serial and no
+// heap in here.
 #pragma once
 
 #if defined(ARDUINO)
@@ -50,17 +54,19 @@ public:
 
     // samples, the window's length unless the sketch says another
     static constexpr uint32_t kWindow = AUDIO_BLOCK_SAMPLES * 128;
+    // samples, the least a window is: what one read takes
+    static constexpr uint32_t kLeast = 4;
 
     // declare it globally, as every audio object, and never destroy it
     AudioPlayScrub(void);
 
-    // the window: length samples of ram, the sketch's to keep (DMAMEM is a
-    // good place for it). nothing sounds until it is lent
+    // the window: length samples of ram, kLeast or more, the sketch's to
+    // keep (DMAMEM is a good place for it). nothing sounds until it is lent
     void setScrubBuffer(int16_t* buf, uint32_t length = kWindow);
 
     // the file to play, from its start, the scrubber stopped: activate or
-    // setMode starts it. false if it will not open, and then there is no
-    // sound to play
+    // setMode starts it. the file is opened here and read in update().
+    // false if it will not open, and then there is no sound to play
     bool setFile(const char* filename);
 
     // sounding or not, and in which mode
@@ -95,7 +101,9 @@ private:
     File file_;
     uint32_t count_ = 0;            // the file's length, samples
     int16_t* window_ = nullptr;     // the window's ram,
-    uint32_t length_ = 0;           // and how many samples it has room for
+    uint32_t length_ = 0;           // how many samples it has room for,
+    uint32_t start_ = 0;            // the sample of the file its first is,
+    uint32_t have_ = 0;             // and how many of the file's it holds
     int sounding_ = STOPPED;        // the mode the last block was made in
     sb::Playhead head_;
     float scratch_[AUDIO_BLOCK_SAMPLES];

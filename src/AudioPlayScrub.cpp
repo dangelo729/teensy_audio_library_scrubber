@@ -6,6 +6,8 @@
 
 #if defined(ARDUINO)
 
+#include <string.h>
+
 namespace {
 
 // everything masked, for a short copy. PRIMASK is saved and restored
@@ -79,7 +81,8 @@ void AudioPlayScrub::setSpeed(float speed) {
 void AudioPlayScrub::setScrubBuffer(int16_t* buf, uint32_t length) {
     IrqMask m;
     window_ = buf;
-    length_ = buf ? length : 0;
+    length_ = buf && length >= kLeast ? length : 0;
+    have_ = 0;
     head_.setWindow(window_, 0, 0);     // it holds nothing yet: update() reads it in
 }
 
@@ -96,21 +99,31 @@ bool AudioPlayScrub::setFile(const char* filename) {
     }
     const uint64_t samples = file_ ? file_.size() / 2 : 0;
     count_ = samples > 0xFFFFFFFFu ? 0xFFFFFFFFu : (uint32_t)samples;
-    head_.setSound(count_);
-    if (count_ && window_ && length_) load();
+    have_ = 0;
+    head_.setSound(count_);             // none of it in the window: update() reads it in
     busy_ = false;
     return (bool)file_;
 }
 
-// the window read from the card about the playhead, and the playhead told
-// what came: false if nothing did
+// the window moved to where the playhead is going and read from the card,
+// and the playhead told what it holds: false if the card brought nothing.
+// what the old window has of the new one's start is kept, and the card is
+// read on from there: going on through the file, that is where it stands
 bool AudioPlayScrub::load() {
     const uint32_t start = head_.windowFor(length_);
     const uint32_t want = count_ - start < length_ ? count_ - start : length_;
+    uint32_t kept = 0;
+    if (start > start_ && start - start_ < have_) {
+        kept = have_ - (start - start_);
+        memmove(window_, window_ + (start - start_), kept * sizeof(int16_t));
+    }
+    const size_t ask = (size_t)(want - kept) * 2;
     size_t got = 0;
-    if (file_.seek((uint64_t)start * 2)) got = file_.read(window_, (size_t)want * 2);
-    if (got > (size_t)want * 2) got = 0;    // the card's error, read as a count
-    head_.setWindow(window_, start, (uint32_t)(got / 2));
+    if (file_.seek((uint64_t)(start + kept) * 2)) got = file_.read(window_ + kept, ask);
+    if (got > ask) got = 0;             // the card's error, read as a count
+    start_ = start;
+    have_ = kept + (uint32_t)(got / 2);
+    head_.setWindow(window_, start_, have_);
     return got >= 2;
 }
 
