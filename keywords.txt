@@ -1,0 +1,46 @@
+#######################################
+# Syntax coloring map for Scrubby
+# (fields are TAB-separated — required)
+#######################################
+
+#######################################
+# Datatypes / classes (KEYWORD1)
+#######################################
+
+Scrubby	KEYWORD1
+AudioPlayScrub	KEYWORD1
+Playhead	KEYWORD1
+
+#######################################
+# Methods and functions (KEYWORD2)
+#######################################
+
+setScrubBuffer	KEYWORD2
+setFile	KEYWORD2
+activate	KEYWORD2
+setMode	KEYWORD2
+stop	KEYWORD2
+setTarget	KEYWORD2
+setRate	KEYWORD2
+setSpeed	KEYWORD2
+setSound	KEYWORD2
+setWindow	KEYWORD2
+setBuffer	KEYWORD2
+windowFor	KEYWORD2
+setLoop	KEYWORD2
+cut	KEYWORD2
+render	KEYWORD2
+playhead	KEYWORD2
+target	KEYWORD2
+step	KEYWORD2
+locked	KEYWORD2
+count	KEYWORD2
+
+#######################################
+# Constants (LITERAL1)
+#######################################
+
+PLAY	LITERAL1
+SCRUB	LITERAL1
+STOPPED	LITERAL1
+kWindow	LITERAL1
