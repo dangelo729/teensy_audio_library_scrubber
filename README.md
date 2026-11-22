@@ -48,7 +48,7 @@ void loop() {
 
 - `setScrubBuffer(buffer)` lends it a window of RAM, `AudioPlayScrub::kWindow` samples long
   (16,384: a third of a second, 32 KB). The file is never in memory whole; this is the part of it
-  about the playhead. `setScrubBuffer(buffer, length)` lends a window of another length.
+  the playhead is in. `setScrubBuffer(buffer, length)` lends a window of another length.
 - `setFile(name)` chooses the file and leaves the scrubber stopped at its start. It returns false
   if the file will not open.
 - `activate(true, mode)` starts it in a mode, `setMode(mode)` changes mode, and `stop()` stops it
@@ -65,7 +65,8 @@ example writes one. Every call lands at the start of the next audio block (128 s
 Declare the object globally, as every Teensy Audio object.
 
 The scrubber reads the card from the audio interrupt, as the Audio Library's own SD players do, so
-`stop()` it before your sketch writes to the card, and start it again after.
+`stop()` it before your sketch writes to the card, and start it again after. If the sketch wrote
+over the file it plays, give it the file again with `setFile`.
 
 ## Examples
 
@@ -94,7 +95,8 @@ for the board and its card.
 
 If you copied the old `play_scrub.h` and `play_scrub.cpp` into your Audio library folder, remove
 them and the line you added to `Audio.h`, and include `<Scrubby.h>` in your sketch. The calls are
-the same. Mode 3 is `STOPPED`, and `grabBuffer` is gone: the scrubber reads the card itself.
+the same. Mode 3 is `STOPPED`, `grabBuffer` is gone (the scrubber reads the card itself), and a
+scrubber never given a speed plays forwards, where it used to play backwards.
 
 ## Credits and license
 
