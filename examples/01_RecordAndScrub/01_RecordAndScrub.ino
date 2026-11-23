@@ -47,6 +47,9 @@ File recording;                     // the file being recorded
 bool isRecording = false;
 bool sounding = false;              // the scrubber is started
 int mode = AudioPlayScrub::SCRUB;
+float smoothed = 0.0f;              // the pot's reading, smoothed
+float steady = 0.0f;                // the smoothed reading as last heeded
+elapsedMicros sincePot;             // since the pot was read
 
 void startRecording() {
     // the sd library adds to the end of a file, so the last recording goes first
@@ -127,7 +130,13 @@ void loop() {
         else scrubber.stop();
     }
 
-    const float pot = analogRead(POT_PIN) / 1023.0f;
+    // left alone, the pot's reading still flickers a step either way: it is
+    // smoothed over a tenth of a second, however often loop() runs, and
+    // heeded only once it has moved more than a step
+    smoothed += (analogRead(POT_PIN) - smoothed) * (1.0f - expf(-1e-6f * sincePot / 0.1f));
+    sincePot = 0;
+    if (fabsf(smoothed - steady) > 1.0f) steady = smoothed;
+    const float pot = steady / 1023.0f;
     if (mode == AudioPlayScrub::SCRUB) scrubber.setTarget(pot);            // the pot is the sound, end to end
     else scrubber.setSpeed(2.0f * pot - 1.0f);                              // or its speed, -1 to 1
 }

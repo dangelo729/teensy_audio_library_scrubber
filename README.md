@@ -27,6 +27,8 @@ AudioConnection      cordLeft(scrubber, 0, i2s, 0), cordRight(scrubber, 0, i2s, 
 AudioControlSGTL5000 codec;
 
 int16_t window[AudioPlayScrub::kWindow] DMAMEM;     // the part of the file kept in memory
+float smoothed = 0.0f, steady = 0.0f;               // a pot's reading, smoothed, and as last heeded
+elapsedMicros sincePot;                             // since the pot was read
 
 void setup() {
     AudioMemory(8);
@@ -40,7 +42,10 @@ void setup() {
 }
 
 void loop() {
-    scrubber.setTarget(analogRead(A0) / 1023.0f);   // a pot: 0 is the file's start, 1 its end
+    smoothed += (analogRead(A0) - smoothed) * (1.0f - expf(-1e-6f * sincePot / 0.1f));
+    sincePot = 0;
+    if (fabsf(smoothed - steady) > 1.0f) steady = smoothed;
+    scrubber.setTarget(steady / 1023.0f);           // a pot: 0 is the file's start, 1 its end
 }
 ```
 
@@ -56,7 +61,8 @@ void loop() {
   on from wherever the sound is.
 - In `SCRUB`, `setTarget(place)` says where the sound is wanted, from 0 at the file's start to 1 at
   its end, and `setRate(rate)` says how much of the way there it goes each sample. 0.00001 to
-  0.0001 scrubs well: less is a heavier record, slower to catch up. At rest it is silent.
+  0.0001 scrubs well: less is a heavier record, slower to catch up. At rest it is silent. A pot's
+  reading flickers a step even untouched, so the sketch above steadies it.
 - In `PLAY`, `setSpeed(speed)` plays the file at -5 to 5 times its own speed, backwards under 0,
   round and round.
 
