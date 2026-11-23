@@ -74,6 +74,10 @@ The scrubber reads the card from the audio interrupt, as the Audio Library's own
 `stop()` it before your sketch writes to the card, and start it again after. If the sketch wrote
 over the file it plays, give it the file again with `setFile`.
 
+Each time the playhead leaves the window, the next one is read from the card in a single read
+(32 KB at the default length), and the rest of the audio waits for it. A shorter window makes
+shorter reads, more often.
+
 ## Examples
 
 - `01_RecordAndScrub`: record a sound with the audio shield's mic, then scrub through it with a pot

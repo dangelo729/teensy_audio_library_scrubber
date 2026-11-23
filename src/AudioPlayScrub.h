@@ -6,9 +6,10 @@
 // window, a run of samples in ram, and the window is read from the card
 // about the playhead whenever the playhead leaves it.
 //
-// all of this header, includes too, sits inside #if defined(ARDUINO), so
-// the umbrella Scrubby.h stays safe on a computer: there this header is
-// nothing, and sb::Playhead is used directly.
+// all of this header, includes too, is compiled only on an arduino core
+// that has the teensy core's AudioStream.h, so the umbrella Scrubby.h stays
+// safe everywhere else: on a computer, or on a board without the teensy
+// audio stream, this header is nothing, and sb::Playhead is used directly.
 //
 // two modes, as the sketch picks:
 //   PLAY    the sound plays at setSpeed, -5 .. 5 of its own, backwards
@@ -39,7 +40,7 @@
 // heap in here.
 #pragma once
 
-#if defined(ARDUINO)
+#if defined(ARDUINO) && __has_include(<AudioStream.h>)
 
 #include <Arduino.h>
 #include <AudioStream.h>
@@ -109,4 +110,4 @@ private:
     float scratch_[AUDIO_BLOCK_SAMPLES];
 };
 
-#endif  // defined(ARDUINO)
+#endif  // defined(ARDUINO) && __has_include(<AudioStream.h>)

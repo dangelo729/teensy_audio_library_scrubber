@@ -1,10 +1,10 @@
 // scrubby — AudioPlayScrub.cpp
-// the header self-guards on #if defined(ARDUINO), so on a computer this
-// translation unit is empty unless the host rig builds it against its
-// stand-ins for the board.
+// the header self-guards on an arduino core with the teensy core's
+// AudioStream.h, so everywhere else this translation unit is empty; the
+// host rig builds it against its stand-ins for the board.
 #include "AudioPlayScrub.h"
 
-#if defined(ARDUINO)
+#if defined(ARDUINO) && __has_include(<AudioStream.h>)
 
 #include <string.h>
 
@@ -168,4 +168,4 @@ void AudioPlayScrub::update(void) {
     release(block);
 }
 
-#endif  // defined(ARDUINO)
+#endif  // defined(ARDUINO) && __has_include(<AudioStream.h>)
