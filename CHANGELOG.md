@@ -5,6 +5,12 @@ All notable changes to Scrubby are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-11-23
+
+- `Scrubby.h` builds on an Arduino core without the Teensy core's `AudioStream.h`, where
+  it gives `sb::Playhead` alone.
+- The README says what a read from the card costs.
+
 ## [1.0.0] - 2026-11-23
 
 The first release as a library, in place of the `play_scrub.h` and `play_scrub.cpp` once

@@ -1,6 +1,6 @@
 {
   "name": "Scrubby",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A scrubber for the Teensy Audio Library: it plays a sound file the way a record plays under a hand. AudioPlayScrub plays a raw sound file from the SD card through a playhead that goes after a target: scrubbed, it races to where the sound is wanted and slows as it arrives, its pitch following its speed; played, the sound runs at any speed from five times forwards to five times backwards, round and round the file.",
   "keywords": "audio, scrub, scrubber, turntable, varispeed, playback, sampler, sd card, teensy",
   "homepage": "https://github.com/dangelo729/teensy_audio_library_scrubber",
